@@ -1,0 +1,83 @@
+{
+  "name": "sherpa-ai",
+  "version": "0.5.0",
+  "description": "AI cursor companion that reads any web page and guides users by pointing at exact elements. Works in React, Next.js, Vite, plain HTML — drop in via npm import or one-line <script> tag, BYOK direct from browser.",
+  "keywords": [
+    "ai",
+    "cursor",
+    "companion",
+    "onboarding",
+    "guide",
+    "anthropic",
+    "claude",
+    "walkthrough",
+    "assistant",
+    "react",
+    "nextjs"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "unpkg": "dist/companion.js",
+  "jsdelivr": "dist/companion.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.mjs"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.mjs",
+      "require": "./dist/server.cjs",
+      "default": "./dist/server.mjs"
+    },
+    "./companion.js": "./dist/companion.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/companion.js",
+    "dist/index.mjs",
+    "dist/index.cjs",
+    "dist/index.d.ts",
+    "dist/server.mjs",
+    "dist/server.cjs",
+    "dist/server.d.ts",
+    "companion-ai.png",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "build:embed": "node scripts/build-embed.mjs",
+    "prepublishOnly": "npm run build:embed"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
+    "framer-motion": "^11.11.0",
+    "modern-screenshot": "^4.7.0",
+    "next": "14.2.15",
+    "openai": "^4.67.0",
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.4.20",
+    "esbuild": "^0.28.0",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5"
+  }
+}
