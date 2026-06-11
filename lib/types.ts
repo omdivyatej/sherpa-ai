@@ -54,6 +54,15 @@ export type GuideResponse = {
   action: "highlight";
   done: boolean;
   value?: string | null;
+  /**
+   * Provenance of `value`, used by the client to decide whether to type the
+   * value immediately or pause and ask the user to confirm/edit.
+   *  - "from_user"  → the value was given in the goal text; type immediately.
+   *  - "invented"   → the AI generated the value to satisfy a required field
+   *                   the user didn't mention; pause and show a preview.
+   * Omitted/null when there is no `value` (point is a button/link/toggle).
+   */
+  value_origin?: "from_user" | "invented" | null;
 };
 
 export type Provider = "anthropic" | "groq";

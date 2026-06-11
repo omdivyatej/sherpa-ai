@@ -48,8 +48,23 @@ type Status =
   | "thinking"
   | "pointing"
   | "confirming"
+  | "previewing_value"
   | "done"
   | "punted";
+
+// Helper: human-readable label for a target element, used in popovers.
+function targetLabel(target: HTMLElement): string {
+  return (
+    (target.innerText ||
+      target.getAttribute("aria-label") ||
+      target.getAttribute("placeholder") ||
+      target.getAttribute("title") ||
+      target.getAttribute("name") ||
+      "this field")
+      .trim()
+      .slice(0, 60) || "this field"
+  );
+}
 
 // Words that, as the visible text/aria-label of a button, indicate a
 // destructive or hard-to-undo action. In autonomous mode we pause and ask
@@ -114,6 +129,19 @@ export default function Companion() {
     gen: number;
   } | null>(null);
   const [confirmLabel, setConfirmLabel] = useState<string>("");
+
+  // Value-preview gate: when the AI proposes an invented value in autonomous
+  // mode (one not supplied by the user in the goal), we pause and show the
+  // proposed value next to the field for review / edit / skip.
+  const pendingValueRef = useRef<{
+    target: HTMLElement;
+    label: string;
+    currentGoal: string;
+    gen: number;
+  } | null>(null);
+  const [previewLabel, setPreviewLabel] = useState<string>("");
+  const [previewValue, setPreviewValue] = useState<string>("");
+
   // Set after runStep is defined below; lets confirm/skip helpers resume the
   // loop without creating a circular useCallback dependency.
   const runStepRef = useRef<
@@ -605,6 +633,26 @@ export default function Companion() {
           setOpen(true);
           return;
         }
+        // Value-preview gate: if the model proposed a value that it labeled
+        // "invented" (i.e. not given by the user in the goal), pause and let
+        // the user approve/edit/skip it before we type. Values labeled
+        // "from_user" type immediately. Selects also pause — picking a wrong
+        // option silently is a bad failure mode.
+        if (
+          data.value != null &&
+          (data.value_origin ?? "invented") === "invented"
+        ) {
+          pendingValueRef.current = {
+            target,
+            label: targetLabel(target),
+            currentGoal,
+            gen,
+          };
+          setPreviewLabel(targetLabel(target));
+          setPreviewValue(data.value);
+          setStatus("previewing_value");
+          return;
+        }
         // ~450ms is enough for the cursor's spring animation to land on the
         // target without feeling rushed. Was 900ms — felt slow.
         setTimeout(async () => {
@@ -829,6 +877,58 @@ export default function Companion() {
     setPointRect(null);
   }, []);
 
+  // Approve (or edit-and-approve) the AI's invented value. Types the value
+  // (possibly user-edited) and continues the loop.
+  const approveValue = useCallback(() => {
+    const p = pendingValueRef.current;
+    const finalValue = previewValue;
+    pendingValueRef.current = null;
+    setPreviewLabel("");
+    setPreviewValue("");
+    if (!p) return;
+    if (p.gen !== generationRef.current) return;
+    setStatus("thinking");
+    setTimeout(async () => {
+      if (p.gen !== generationRef.current) return;
+      performAuto(p.target, finalValue);
+      setPointId(null);
+      setPointRect(null);
+      setStatus("thinking");
+      await awaitDomSettle();
+      if (p.gen !== generationRef.current) return;
+      runStepRef.current?.(p.currentGoal, p.gen);
+    }, 60);
+  }, [previewValue]);
+
+  // Skip the value entirely (don't type, advance the step). Useful when the
+  // user wants to leave a non-required field empty.
+  const skipValue = useCallback(() => {
+    const p = pendingValueRef.current;
+    pendingValueRef.current = null;
+    setPreviewLabel("");
+    setPreviewValue("");
+    if (!p) return;
+    if (p.gen !== generationRef.current) return;
+    // Record in history that we skipped this field so the model doesn't try
+    // to fill it again next step.
+    historyRef.current = [
+      ...historyRef.current,
+      {
+        pointedAt: null,
+        said: `Skipped filling "${p.label}" (user declined the proposed value).`,
+      },
+    ];
+    setPointId(null);
+    setPointRect(null);
+    setStatus("thinking");
+    setTimeout(async () => {
+      if (p.gen !== generationRef.current) return;
+      await awaitDomSettle({ minIdleMs: 100 });
+      if (p.gen !== generationRef.current) return;
+      runStepRef.current?.(p.currentGoal, p.gen);
+    }, 60);
+  }, []);
+
   function stop() {
     if (activeGoalRef.current && goalStartedAtRef.current) {
       const finishedAt = Date.now();
@@ -848,6 +948,11 @@ export default function Companion() {
     }
     generationRef.current += 1; // cancels any in-flight work
     detachClickListener();
+    pendingConfirmRef.current = null;
+    pendingValueRef.current = null;
+    setConfirmLabel("");
+    setPreviewLabel("");
+    setPreviewValue("");
     setActiveGoal(null);
     setStatus("idle");
     setPointId(null);
@@ -888,8 +993,8 @@ export default function Companion() {
 
   // right-click anywhere opens the panel at the cursor; Esc closes it
   useEffect(() => {
-    const PANEL_W = 320;
-    const PANEL_H = 280;
+    const PANEL_W = 340;
+    const PANEL_H = 360;
     const onContextMenu = (e: MouseEvent) => {
       // don't hijack right-click inside the panel itself (so you can copy text)
       const target = e.target as HTMLElement | null;
@@ -1063,9 +1168,81 @@ export default function Companion() {
         )}
       </AnimatePresence>
 
-      {/* (the floating right-side pill was removed — the thinking dots that
-          follow the cursor convey the same status without occupying screen
-          real estate. Right-click anywhere re-summons the panel.) */}
+      {/* Value-preview popover — shown when the AI proposes an invented value.
+          Sits next to the highlighted field; user can edit the value inline
+          and approve, or skip the field entirely. */}
+      <AnimatePresence>
+        {status === "previewing_value" && pointRect && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            data-companion-overlay
+            className="fixed z-[64] w-72 bg-white rounded-lg shadow-xl border border-slate-200 p-3 text-[12px]"
+            style={{
+              top: Math.min(pointRect.bottom + 10, window.innerHeight - 180),
+              left: Math.min(pointRect.left, window.innerWidth - 300),
+            }}
+          >
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+              Suggested value for
+            </div>
+            <div className="text-sm font-semibold text-slate-800 mb-2 truncate">
+              {previewLabel}
+            </div>
+            <input
+              value={previewValue}
+              onChange={(e) => setPreviewValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") approveValue();
+                if (e.key === "Escape") skipValue();
+              }}
+              autoFocus
+              className="w-full text-sm border border-slate-300 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-300"
+            />
+            <div className="text-[10px] text-slate-400 mt-1">
+              Edit inline if you want. Enter approves, Esc skips.
+            </div>
+            <div className="flex gap-1.5 mt-3">
+              <button
+                onClick={skipValue}
+                className="flex-1 text-xs rounded py-1.5 border border-slate-200 hover:bg-slate-50"
+              >
+                Skip
+              </button>
+              <button
+                onClick={approveValue}
+                className="flex-1 text-xs text-white rounded py-1.5 bg-sky-600 hover:bg-sky-700"
+              >
+                Approve
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Stop pill — fixed top-right, visible during any active state. The
+          existing in-panel "stop" link is fine for users inside the panel,
+          but during auto mode the panel is collapsed; this is the always-on
+          escape hatch. */}
+      {(status === "thinking" ||
+        status === "pointing" ||
+        status === "confirming" ||
+        status === "previewing_value") && (
+        <button
+          onClick={stop}
+          data-companion-overlay
+          aria-label="Stop the guide"
+          className="fixed z-[80] top-4 right-4 bg-white/95 backdrop-blur border border-slate-300 rounded-full pl-2 pr-3 py-1.5 shadow-lg flex items-center gap-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:border-rose-300 hover:text-rose-700"
+        >
+          <span
+            className="inline-block w-2.5 h-2.5 rounded-sm bg-rose-500"
+            aria-hidden
+          />
+          Stop guide
+        </button>
+      )}
 
       {/* done modal */}
       <AnimatePresence>
@@ -1126,7 +1303,7 @@ export default function Companion() {
             exit={{ opacity: 0, scale: 0.96 }}
             transition={{ duration: 0.12 }}
             style={{ top: panelPos.y, left: panelPos.x }}
-            className="fixed z-[70] w-64 bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden origin-top-left text-[12px]"
+            className="fixed z-[70] w-80 bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden origin-top-left text-[12px]"
           >
             <button
               onClick={() => {
@@ -1149,10 +1326,10 @@ export default function Companion() {
                 placeholder={
                   activeGoal && (status === "thinking" || status === "pointing")
                     ? "Replace task with something else…"
-                    : "What do you want to do?"
+                    : `What do you want to do? Add details on new lines:\nAdd a patient\nName: Om Divyatej\nPhone: +91 9876543210\nEmail: om@example.com`
                 }
-                rows={2}
-                className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-gray-300"
+                rows={5}
+                className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 resize-y focus:outline-none focus:ring-1 focus:ring-gray-300"
               />
               <div className="flex gap-1">
                 <button

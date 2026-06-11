@@ -145,12 +145,24 @@ function safeParse(raw: string): GuideResponse {
         typeof obj.value === "string" && obj.value.length > 0
           ? obj.value
           : null;
+      const rawOrigin = obj.value_origin;
+      const value_origin: "from_user" | "invented" | null =
+        value == null
+          ? null
+          : rawOrigin === "from_user"
+            ? "from_user"
+            : rawOrigin === "invented"
+              ? "invented"
+              : // Old models / unparsed responses default to "invented" — safer,
+                // because it triggers the preview UI rather than silently typing.
+                "invented";
       return {
         say: obj.say,
         point: obj.point,
         action: "highlight",
         done: obj.done,
         value,
+        value_origin,
       };
     }
   } catch {}
