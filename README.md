@@ -12,17 +12,45 @@ No tour authoring. No `data-tour-step="1"` tags. The AI reads your live DOM and 
 
 ---
 
-## Install (production, the recommended path)
+## Install — 3 steps
 
-Sherpa makes the AI calls **through your backend**, never directly from the browser. Your Anthropic key stays server-side — it is never exposed to your users.
+You'll need an Anthropic API key from https://console.anthropic.com/settings/keys. Your key lives only on **your** server. It is never sent to the browser.
 
-**1. Drop the component in:**
+### 1. Install + set your key
+
+```bash
+npm install sherpa-ai
+```
+
+Add your key to your server env (`.env.local` for Next.js dev, or your host's env panel in production):
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### 2. Add one proxy route
+
+```ts
+// app/api/sherpa-proxy/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { handleSherpaRequest } from "sherpa-ai/server";
+
+export const runtime = "nodejs";
+
+export async function POST(req: NextRequest) {
+  const body = await req.json();
+  body.anthropicKey = process.env.ANTHROPIC_API_KEY;
+  return NextResponse.json(await handleSherpaRequest(body));
+}
+```
+
+### 3. Drop the component into your root layout
 
 ```tsx
-// Next.js — app/layout.tsx
+// app/layout.tsx
 import { Companion } from "sherpa-ai";
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }) {
   return (
     <html>
       <body>
@@ -30,7 +58,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Companion
           endpoint="/api/sherpa-proxy"
           context="My app does X. Reports tab is at the top. Export = the toolbar Download button."
-          analyticsEndpoint="/api/companion-events"
         />
       </body>
     </html>
@@ -38,34 +65,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 ```
 
-**2. Add the proxy route — your key lives here, server-side only:**
+That's it. Root layout = every page, so Sherpa is now live on `/`, `/leads`, `/anything` — including routes you add tomorrow.
 
-```ts
-// app/api/sherpa-proxy/route.ts
-import { NextRequest, NextResponse } from "next/server";
-
-export const runtime = "nodejs";
-
-export async function POST(req: NextRequest) {
-  const body = await req.json();
-  body.anthropicKey = process.env.ANTHROPIC_API_KEY; // injected server-side
-
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": process.env.ANTHROPIC_API_KEY!,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  return NextResponse.json(await r.json());
-}
-```
-
-Two files. ~15 lines total. Your key never leaves the server.
-
-The proxy is also where you should add auth, rate limits, per-user quotas, and logging — standard backend hygiene you already have for the rest of your app.
+Two files. The proxy is also where you'd add auth / rate limits / per-user quotas later if you want.
 
 ---
 
