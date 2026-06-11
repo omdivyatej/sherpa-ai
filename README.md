@@ -18,26 +18,57 @@ No tour authoring. No `data-tour-step="1"` tags. The AI reads your live DOM and 
 
 ---
 
-## Install — 3 steps
+## Install
 
-You'll need an Anthropic API key from https://console.anthropic.com/settings/keys. Your key lives only on **your** server. It is never sent to the browser.
+> **You'll always do three things:** install the package, stand up a tiny server route that holds your Anthropic key, and mount the `<Companion>` once. The "how" of each step depends on your stack — pick yours below.
 
-### 1. Install + set your key
+### Read this first — why you need a server
+
+Your Anthropic API key (`sk-ant-...`) must live somewhere only **you** can read. If you ship it inside your React bundle, every visitor to your site can copy it from the browser source and burn down your Anthropic balance.
+
+So the key lives on a server you control. The flow is:
+
+```
+Browser  ──POST goal──▶  Your server  ──+ key──▶  api.anthropic.com
+                            ↑
+                            └── ANTHROPIC_API_KEY here
+```
+
+| Your app | Already has a server? | Setup path |
+|---|---|---|
+| **Next.js** (App or Pages) | Yes — Next runs both client and API | One route file |
+| **Remix / SvelteKit / Nuxt** | Yes — these are full-stack frameworks | One route file |
+| **Vite, Create React App, Vue/Svelte/Angular SPA** | **No** — they're frontend-only | Add a tiny Express server (≈15 lines) |
+| **Plain HTML, no bundler** | Depends on your host | Use the script tag + any backend |
+
+Pick your stack:
+
+- [Next.js (App Router)](#nextjs-app-router) — most common
+- [Next.js (Pages Router)](#nextjs-pages-router)
+- [Vite + React](#vite--react)
+- [Create React App](#create-react-app)
+- [Remix](#remix)
+- [Plain HTML / script tag](#plain-html--script-tag)
+- [Other / generic SPA](#other--generic-spa-vue-svelte-angular)
+
+---
+
+### Next.js (App Router)
+
+<details open>
+<summary><b>3 steps</b> · the easy case</summary>
 
 ```bash
 npm install sherpa-ai
 ```
 
-Add your key to your server env (`.env.local` for Next.js dev, or your host's env panel in production):
-
+**`.env.local`** — your key, server-only:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-### 2. Add one proxy route
-
+**`app/api/sherpa-proxy/route.ts`** — the proxy route:
 ```ts
-// app/api/sherpa-proxy/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { handleSherpaRequest } from "sherpa-ai/server";
 
@@ -50,10 +81,8 @@ export async function POST(req: NextRequest) {
 }
 ```
 
-### 3. Drop the component into your root layout
-
+**`app/layout.tsx`** — mount once, lives on every page:
 ```tsx
-// app/layout.tsx
 import { Companion } from "sherpa-ai";
 
 export default function RootLayout({ children }) {
@@ -61,19 +90,290 @@ export default function RootLayout({ children }) {
     <html>
       <body>
         {children}
-        <Companion
-          endpoint="/api/sherpa-proxy"
-          context="My app does X. Reports tab is at the top. Export = the toolbar Download button."
-        />
+        <Companion endpoint="/api/sherpa-proxy" context="My app does X. The Reports tab is at the top. Export = the Download button." />
       </body>
     </html>
   );
 }
 ```
 
-That's it. Root layout = every page, so Sherpa is now live on `/`, `/leads`, `/anything` — including routes you add tomorrow.
+Run `npm run dev` → open the app → right-click anywhere.
 
-Two files. The proxy is also where you'd add auth / rate limits / per-user quotas later if you want.
+</details>
+
+---
+
+### Next.js (Pages Router)
+
+<details>
+<summary><b>3 steps</b> · same as App Router with the legacy API style</summary>
+
+```bash
+npm install sherpa-ai
+```
+
+**`.env.local`:** `ANTHROPIC_API_KEY=sk-ant-...`
+
+**`pages/api/sherpa-proxy.ts`:**
+```ts
+import type { NextApiRequest, NextApiResponse } from "next";
+import { handleSherpaRequest } from "sherpa-ai/server";
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== "POST") return res.status(405).end();
+  req.body.anthropicKey = process.env.ANTHROPIC_API_KEY;
+  res.json(await handleSherpaRequest(req.body));
+}
+```
+
+**`pages/_app.tsx`:**
+```tsx
+import type { AppProps } from "next/app";
+import { Companion } from "sherpa-ai";
+
+export default function App({ Component, pageProps }: AppProps) {
+  return (
+    <>
+      <Component {...pageProps} />
+      <Companion endpoint="/api/sherpa-proxy" context="..." />
+    </>
+  );
+}
+```
+
+</details>
+
+---
+
+### Vite + React
+
+<details>
+<summary><b>4 steps</b> · Vite has no backend — you'll add a 15-line Express server</summary>
+
+```bash
+npm install sherpa-ai
+npm install -D express cors dotenv concurrently
+npm install -D @types/express @types/cors    # if TypeScript
+```
+
+**`.env`:** `ANTHROPIC_API_KEY=sk-ant-...`
+
+**`server.js`** (new file, project root):
+```js
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import { handleSherpaRequest } from "sherpa-ai/server";
+
+dotenv.config();
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: "10mb" }));
+
+app.post("/api/sherpa-proxy", async (req, res) => {
+  req.body.anthropicKey = process.env.ANTHROPIC_API_KEY;
+  res.json(await handleSherpaRequest(req.body));
+});
+
+app.listen(4000, () => console.log("sherpa proxy on :4000"));
+```
+
+**`vite.config.ts`** — forward `/api/*` from Vite (5173) to Express (4000):
+```ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  server: { proxy: { "/api": "http://localhost:4000" } },
+});
+```
+
+**`package.json`** — run both servers with one command:
+```json
+"scripts": {
+  "dev": "concurrently -k -n web,api -c blue,magenta \"vite\" \"node server.js\""
+}
+```
+
+**`src/main.tsx` (or `App.tsx`)** — mount Sherpa once:
+```tsx
+import { Companion } from "sherpa-ai";
+
+function App() {
+  return (
+    <>
+      <YourApp />
+      <Companion endpoint="/api/sherpa-proxy" context="..." />
+    </>
+  );
+}
+```
+
+Run `npm run dev`. Both servers boot together. In production, point your `endpoint` at wherever you deploy that Express service.
+
+</details>
+
+---
+
+### Create React App
+
+<details>
+<summary><b>4 steps</b> · same shape as Vite — add a tiny Express server</summary>
+
+```bash
+npm install sherpa-ai
+npm install -D express cors dotenv concurrently
+```
+
+**`.env`** (project root): `ANTHROPIC_API_KEY=sk-ant-...`
+
+**`server.js`** (same as the Vite example above).
+
+**`package.json`** — CRA already lets you set a dev proxy:
+```json
+{
+  "proxy": "http://localhost:4000",
+  "scripts": {
+    "dev": "concurrently -k -n web,api -c blue,magenta \"react-scripts start\" \"node server.js\""
+  }
+}
+```
+
+**`src/App.tsx`** — mount once:
+```tsx
+import { Companion } from "sherpa-ai";
+
+export default function App() {
+  return (
+    <>
+      <YourApp />
+      <Companion endpoint="/api/sherpa-proxy" context="..." />
+    </>
+  );
+}
+```
+
+`npm run dev` boots both. Production: deploy CRA build behind the Express server (or any backend) so `/api/sherpa-proxy` stays first-party.
+
+</details>
+
+---
+
+### Remix
+
+<details>
+<summary><b>3 steps</b> · Remix has a server out of the box</summary>
+
+```bash
+npm install sherpa-ai
+```
+
+**`.env`:** `ANTHROPIC_API_KEY=sk-ant-...`
+
+**`app/routes/api.sherpa-proxy.ts`:**
+```ts
+import type { ActionFunctionArgs } from "@remix-run/node";
+import { handleSherpaRequest } from "sherpa-ai/server";
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const body = await request.json();
+  body.anthropicKey = process.env.ANTHROPIC_API_KEY;
+  return Response.json(await handleSherpaRequest(body));
+};
+```
+
+**`app/root.tsx`:**
+```tsx
+import { Companion } from "sherpa-ai";
+
+export default function App() {
+  return (
+    <html>
+      <body>
+        <Outlet />
+        <Companion endpoint="/api/sherpa-proxy" context="..." />
+      </body>
+    </html>
+  );
+}
+```
+
+</details>
+
+---
+
+### Plain HTML / script tag
+
+<details>
+<summary><b>2 steps</b> · zero JS framework, still need a backend for the key</summary>
+
+You **still** need a server-side proxy somewhere to hold the Anthropic key. Could be a Cloudflare Worker, Vercel function, Lambda, Express, PHP, Python, whatever — anything that can hold an env var and forward a POST.
+
+Once that endpoint exists at, say, `/api/sherpa-proxy`:
+
+```html
+<!DOCTYPE html>
+<html>
+  <body>
+    <!-- your page -->
+
+    <script
+      src="https://cdn.jsdelivr.net/npm/sherpa-ai/dist/companion.js"
+      data-endpoint="/api/sherpa-proxy"
+      data-context="My app does X. Pages are: Dashboard, Settings, Reports."
+    ></script>
+  </body>
+</html>
+```
+
+The script self-mounts on `DOMContentLoaded`. No bundler, no React, no build step.
+
+</details>
+
+---
+
+### Other / generic SPA (Vue, Svelte, Angular)
+
+<details>
+<summary><b>2 steps</b> · use the script tag</summary>
+
+The cleanest path for non-React frameworks: drop the script tag into your `index.html`. It works on any DOM, regardless of which framework is driving it. You still need a backend proxy somewhere — same as the [Plain HTML](#plain-html--script-tag) instructions.
+
+```html
+<script
+  src="https://cdn.jsdelivr.net/npm/sherpa-ai/dist/companion.js"
+  data-endpoint="/api/sherpa-proxy"
+  data-context="..."
+></script>
+```
+
+Or call `mountCompanion()` from JS:
+
+```ts
+import { mountCompanion } from "sherpa-ai";
+
+mountCompanion({
+  endpoint: "/api/sherpa-proxy",
+  context: "...",
+});
+```
+
+</details>
+
+---
+
+### Don't have a server at all?
+
+If your app is purely static (Vite/CRA on Netlify, Vue SPA on S3, etc.), here are the lightest server options to hold the key:
+
+- **Vercel functions** — `api/sherpa-proxy.ts`, deploys with your frontend, free tier covers most projects
+- **Netlify functions** — `netlify/functions/sherpa-proxy.ts`
+- **Cloudflare Workers** — runs at the edge, generous free tier
+- **AWS Lambda + API Gateway** — if you're already on AWS
+- **Render / Railway / Fly** — host the Express server above for a few dollars a month
+
+All of them: set `ANTHROPIC_API_KEY` as an env var, paste the 4-line `handleSherpaRequest` body, point `endpoint` at the deployed URL.
 
 ---
 
@@ -93,41 +393,6 @@ Two files. The proxy is also where you'd add auth / rate limits / per-user quota
 - **No SaaS lock-in.** Sherpa is an OSS library + your own backend. Your data stays yours; your analytics stay yours.
 - **Built-in analytics that actually answer "where are users stuck?"** — see below.
 - **Open source, MIT.** Fork it. Rebrand it. The cursor PNG and panel styles are easy to swap.
-
-## Quick start, other stacks
-
-### Vite / CRA
-
-```tsx
-import { Companion } from "sherpa-ai";
-
-<Companion endpoint="/api/sherpa-proxy" context="..." />
-```
-
-### Vanilla JS
-
-```ts
-import { mountCompanion } from "sherpa-ai";
-
-mountCompanion({
-  endpoint: "/api/sherpa-proxy",
-  context: "...",
-});
-```
-
-### Plain HTML page (no React, no bundler)
-
-```html
-<script
-  src="https://cdn.jsdelivr.net/npm/sherpa-ai@latest/dist/companion.js"
-  data-endpoint="/api/sherpa-proxy"
-  data-context="..."
-></script>
-```
-
-The companion expects a server route at the URL you pass to `endpoint`. The full reference proxy implementation is in [the source repo](#how-it-works).
-
----
 
 ## Configuration
 
