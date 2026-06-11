@@ -21,6 +21,9 @@ export type ElementState = {
   selected: boolean | null;
   /** Disabled / aria-disabled / readonly — model should not point at these. */
   disabled: boolean;
+  /** True if the element has the HTML `required` attribute or aria-required="true".
+   *  The model MUST fill every required-empty input before clicking Submit/Save/etc. */
+  required: boolean;
   /** href for links, useful so the model knows where a link goes without clicking. */
   href: string | null;
 };

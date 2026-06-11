@@ -250,6 +250,13 @@ function extractState(el: HTMLElement): ElementState {
       ? el.readOnly
       : false);
 
+  // Required: native HTML `required` or aria-required="true". Surfaced to the
+  // model so it can refuse to submit until every required-empty field is filled.
+  const required =
+    ((el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement)
+      .required === true) ||
+    el.getAttribute("aria-required") === "true";
+
   return {
     value,
     options,
@@ -258,6 +265,7 @@ function extractState(el: HTMLElement): ElementState {
     expanded,
     selected,
     disabled,
+    required,
     href,
   };
 }
