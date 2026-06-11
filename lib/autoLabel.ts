@@ -24,21 +24,27 @@ function trim(s: string | null | undefined): string {
   return (s || "").replace(/\s+/g, " ").trim();
 }
 
-function isVisible(el: HTMLElement): boolean {
+/**
+ * Truly rendered: has size, not display:none, not visibility:hidden. Note: we
+ * do NOT require the element to overlap the current viewport — the AI needs
+ * to know about scroll-down content too. Off-viewport elements get
+ * `inViewport: false` and are scroll-into-view'd before any click.
+ */
+function isRendered(el: HTMLElement): boolean {
   const rect = el.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return false;
   const style = window.getComputedStyle(el);
   if (style.visibility === "hidden" || style.display === "none") return false;
-  // off-screen check: must overlap the viewport at all
-  if (
+  return true;
+}
+
+function isInViewport(rect: DOMRect): boolean {
+  return !(
     rect.bottom < 0 ||
     rect.top > window.innerHeight ||
     rect.right < 0 ||
     rect.left > window.innerWidth
-  ) {
-    return false;
-  }
-  return true;
+  );
 }
 
 function resolveLabelledBy(el: HTMLElement): string {
@@ -151,7 +157,11 @@ function position(rect: DOMRect): string {
   const cx = rect.left + rect.width / 2;
   const cy = rect.top + rect.height / 2;
   const horiz = cx < vw / 3 ? "left" : cx > (2 * vw) / 3 ? "right" : "center";
-  const vert = cy < vh / 3 ? "top" : cy > (2 * vh) / 3 ? "bottom" : "middle";
+  // off-viewport vertical handling: helps the AI reason about scroll position.
+  let vert: string;
+  if (rect.bottom < 0) vert = "above viewport (scroll up)";
+  else if (rect.top > vh) vert = "below viewport (scroll down)";
+  else vert = cy < vh / 3 ? "top" : cy > (2 * vh) / 3 ? "bottom" : "middle";
   return `${vert} ${horiz}`;
 }
 
@@ -267,10 +277,26 @@ export type AutoLabelResult = {
   refMap: Map<string, HTMLElement>;
 };
 
+// Cap on elements per harvest. Tall pages (long tables, multi-section forms)
+// can easily exceed 500 interactive controls; sending all of them blows up
+// the prompt and slows the call. We prioritize in-viewport elements, then
+// fill the remaining budget with off-viewport ones in document order.
+const HARVEST_LIMIT = 200;
+
 export function harvest(): AutoLabelResult {
-  const nodes = Array.from(
+  const all = Array.from(
     document.querySelectorAll<HTMLElement>(SELECTOR)
-  ).filter(isVisible);
+  ).filter(isRendered);
+
+  // Two-pass cap: visible first, then off-viewport — preserves what the user
+  // is looking at while still including scroll context.
+  const inView: HTMLElement[] = [];
+  const offView: HTMLElement[] = [];
+  for (const el of all) {
+    (isInViewport(el.getBoundingClientRect()) ? inView : offView).push(el);
+  }
+  const remaining = Math.max(0, HARVEST_LIMIT - inView.length);
+  const nodes = [...inView, ...offView.slice(0, remaining)];
 
   const refMap = new Map<string, HTMLElement>();
   const elements: GuideElement[] = [];
@@ -336,6 +362,7 @@ export function harvest(): AutoLabelResult {
       rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
       labelQuality,
       state,
+      inViewport: isInViewport(rect),
     });
   }
 

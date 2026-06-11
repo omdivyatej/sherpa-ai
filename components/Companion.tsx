@@ -518,7 +518,26 @@ export default function Companion() {
         return;
       }
 
-      const rect = target.getBoundingClientRect();
+      // If the target is outside the viewport, scroll it into view first and
+      // let the page settle for a beat before measuring its on-screen rect.
+      // Without this the highlight ring sits on stale coordinates and an
+      // autonomous click can fire on an off-screen element.
+      let rect = target.getBoundingClientRect();
+      const outsideViewport =
+        rect.bottom < 0 ||
+        rect.top > window.innerHeight ||
+        rect.right < 0 ||
+        rect.left > window.innerWidth;
+      if (outsideViewport) {
+        try {
+          target.scrollIntoView({ block: "center", behavior: "smooth" });
+        } catch {
+          target.scrollIntoView();
+        }
+        await new Promise((r) => setTimeout(r, 350));
+        if (gen !== generationRef.current) return;
+        rect = target.getBoundingClientRect();
+      }
       setPointId(data.point);
       setPointRect(rect);
       setCursorPos({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });

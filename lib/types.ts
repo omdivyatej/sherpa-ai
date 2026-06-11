@@ -38,6 +38,9 @@ export type GuideElement = {
   rect: Rect;
   labelQuality: LabelQuality;
   state: ElementState;
+  /** True if the element's rect overlaps the current viewport. The client
+   *  scrolls off-viewport targets into view before clicking. */
+  inViewport: boolean;
 };
 
 export type HistoryStep = { pointedAt: string | null; said: string };

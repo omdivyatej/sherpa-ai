@@ -19,8 +19,9 @@ You will receive a user message containing these XML sections:
   - nearbyText: nearby context such as the section heading, card title, or the first cell of the row this element sits in.
   - tagType: the kind of element (button, input, select, link, nav-item, etc.).
   - role: an ARIA role if set.
-  - position: a coarse description of where the element sits on screen (e.g. "top-right of header", "in main content").
+  - position: a coarse description of where the element sits on screen (e.g. "top-right of header", "in main content"). For elements outside the current viewport this also notes "above viewport (scroll up)" or "below viewport (scroll down)".
   - rect: the element's on-screen position and size (for the client only; ignore for reasoning).
+  - inViewport: true if the element is currently in the user's visible area. False means the client will scroll-into-view before clicking. Do NOT punt just because a target is off-screen — pick it normally if it matches the goal; scrolling is automatic.
   - labelQuality: "good" | "weak" | "none". Indicates how confident the semantic labels are. "none" means we have NO semantic signal for this element — only its tagType/role/position and (if attached) the screenshot can tell you what it is.
   - state: live state of the element. Fields are null when they don't apply. Read these BEFORE deciding to act on the element:
       - value: current text-shaped value. For text inputs/textareas, the typed string. For single-selects, the selected option's text. For multi-selects, selected option texts joined with ", ". For file inputs, the file names. For contenteditable, the current text content.
