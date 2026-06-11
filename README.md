@@ -3,6 +3,12 @@
 **An AI cursor that walks your users through your product, in plain English, on any page.**
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/sherpa-ai">npm</a> ·
+  <a href="https://github.com/omdivyatej/sherpa-ai">github</a> ·
+  <a href="https://github.com/omdivyatej/sherpa-ai/issues">issues</a>
+</p>
+
+<p align="center">
   <img src="https://cdn.jsdelivr.net/npm/sherpa-ai@latest/companion-ai.png" alt="sherpa-ai panel" width="520" />
 </p>
 
