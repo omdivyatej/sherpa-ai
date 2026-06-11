@@ -48,7 +48,21 @@ export type MountOptions = {
    * user to confirm. Set false to skip the gate.
    */
   confirmDestructiveActions?: boolean;
+  /**
+   * How the value-preview popover behaves when the AI proposes a value it
+   * "invented" (not given by the user in the goal):
+   *   - "auto"   (default) — popover shows with a countdown; auto-approves
+   *                          after `reviewAutoApproveMs` unless the user
+   *                          edits/skips
+   *   - "always"           — popover shows, no timer; user must click
+   *   - "never"            — no popover, invented values type immediately
+   */
+  reviewInventedValues?: ReviewMode;
+  /** Auto-approve delay in milliseconds for review mode "auto". Default 3000. */
+  reviewAutoApproveMs?: number;
 };
+
+export type ReviewMode = "auto" | "always" | "never";
 
 export function mountCompanion(opts?: MountOptions): void;
 export function Companion(props: MountOptions): null;
@@ -60,6 +74,8 @@ export function setAnalyticsCallback(
   fn: ((event: CompanionEvent) => void) | null
 ): void;
 export function setConfirmDestructiveActions(value: boolean): void;
+export function setReviewInventedValues(mode: ReviewMode): void;
+export function setReviewAutoApproveMs(ms: number): void;
 
 /**
  * Programmatic API exposed on `window.sherpa` after the companion mounts.

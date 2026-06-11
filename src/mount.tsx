@@ -11,6 +11,9 @@ import {
   setCompanionEndpoint,
   setConfirmDestructiveActions,
   setCursorSrc,
+  setReviewAutoApproveMs,
+  setReviewInventedValues,
+  type ReviewMode,
 } from "../lib/companionConfig";
 import {
   setAnalyticsEndpoint,
@@ -46,6 +49,18 @@ export type MountOptions = {
    * user to confirm. Set false to disable.
    */
   confirmDestructiveActions?: boolean;
+  /**
+   * How the value-preview popover behaves when the AI proposes a value it
+   * "invented" (not given by the user in the goal):
+   *   - "auto"   (default) — popover shows with a countdown; auto-approves
+   *                          after `reviewAutoApproveMs` unless the user
+   *                          edits/skips
+   *   - "always"           — popover shows, no timer; user must click
+   *   - "never"            — no popover, invented values type immediately
+   */
+  reviewInventedValues?: ReviewMode;
+  /** Auto-approve delay in milliseconds for review mode "auto". Default 3000. */
+  reviewAutoApproveMs?: number;
 };
 
 export type { CompanionEvent };
@@ -69,6 +84,12 @@ export function mountCompanion(opts: MountOptions = {}): void {
   setAnalyticsCallback(opts.onAnalytics ?? null);
   if (opts.confirmDestructiveActions !== undefined) {
     setConfirmDestructiveActions(opts.confirmDestructiveActions);
+  }
+  if (opts.reviewInventedValues !== undefined) {
+    setReviewInventedValues(opts.reviewInventedValues);
+  }
+  if (opts.reviewAutoApproveMs !== undefined) {
+    setReviewAutoApproveMs(opts.reviewAutoApproveMs);
   }
 
   if (mounted) return;
@@ -107,4 +128,7 @@ export {
   setAnalyticsEndpoint,
   setAnalyticsCallback,
   setConfirmDestructiveActions,
+  setReviewInventedValues,
+  setReviewAutoApproveMs,
 };
+export type { ReviewMode };

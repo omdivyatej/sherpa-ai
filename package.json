@@ -1,6 +1,6 @@
 {
   "name": "sherpa-ai",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "AI cursor companion that reads any web page and guides users by pointing at exact elements. Works in React, Next.js, Vite, plain HTML — drop in via npm import or one-line <script> tag, BYOK direct from browser.",
   "keywords": [
     "ai",

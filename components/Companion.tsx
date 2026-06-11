@@ -38,6 +38,8 @@ import {
   getCompanionEndpoint,
   getConfirmDestructiveActions,
   getCursorSrc,
+  getReviewAutoApproveMs,
+  getReviewInventedValues,
   setAnthropicKey,
 } from "@/lib/companionConfig";
 import { guideClient } from "@/lib/guideClient";
@@ -141,6 +143,16 @@ export default function Companion() {
   } | null>(null);
   const [previewLabel, setPreviewLabel] = useState<string>("");
   const [previewValue, setPreviewValue] = useState<string>("");
+
+  // True once the user clicks "Approve all" — bypasses the value-preview gate
+  // for the rest of the current task. Reset on start()/stop().
+  const approveAllRef = useRef(false);
+  // Set when the user interacts with the popover (focus/edit/click) so the
+  // auto-approve timer knows to back off.
+  const userTouchedPreviewRef = useRef(false);
+  // Late-bound reference to approveValue, so approveAll / the auto-approve
+  // timer can call whichever closure is current without dep-array juggling.
+  const approveValueRef = useRef<(() => void) | null>(null);
 
   // Set after runStep is defined below; lets confirm/skip helpers resume the
   // loop without creating a circular useCallback dependency.
@@ -638,7 +650,18 @@ export default function Companion() {
         // the user approve/edit/skip it before we type. Values labeled
         // "from_user" type immediately. Selects also pause — picking a wrong
         // option silently is a bad failure mode.
+        //
+        // Three escape hatches:
+        //  - reviewInventedValues === "never": never gate. Types immediately.
+        //  - approveAllRef.current: user already clicked "Approve all" on this
+        //    task. Types immediately for the rest of the task.
+        //  - reviewInventedValues === "auto" (default): popover shows with a
+        //    countdown; if the user doesn't touch it within
+        //    reviewAutoApproveMs, the value auto-approves and types.
+        //  - reviewInventedValues === "always": popover shows, no timer.
         if (
+          getReviewInventedValues() !== "never" &&
+          !approveAllRef.current &&
           data.value != null &&
           (data.value_origin ?? "invented") === "invented"
         ) {
@@ -650,6 +673,7 @@ export default function Companion() {
           };
           setPreviewLabel(targetLabel(target));
           setPreviewValue(data.value);
+          userTouchedPreviewRef.current = false;
           setStatus("previewing_value");
           return;
         }
@@ -822,6 +846,8 @@ export default function Companion() {
     autoModeRef.current = auto;
     historyRef.current = [];
     stepCounterRef.current = 0;
+    approveAllRef.current = false;
+    userTouchedPreviewRef.current = false;
     setStepLogs([]);
     setSay("");
     setPointId(null);
@@ -877,6 +903,14 @@ export default function Companion() {
     setPointRect(null);
   }, []);
 
+  // Click "Approve all": approve the current value AND set a flag so the rest
+  // of this task's invented values type immediately without pausing. Resets
+  // on the next start()/stop().
+  const approveAll = useCallback(() => {
+    approveAllRef.current = true;
+    approveValueRef.current?.();
+  }, []);
+
   // Approve (or edit-and-approve) the AI's invented value. Types the value
   // (possibly user-edited) and continues the loop.
   const approveValue = useCallback(() => {
@@ -899,6 +933,39 @@ export default function Companion() {
       runStepRef.current?.(p.currentGoal, p.gen);
     }, 60);
   }, [previewValue]);
+
+  useEffect(() => {
+    approveValueRef.current = approveValue;
+  }, [approveValue]);
+
+  // Auto-approve countdown for the value-preview popover. Only runs in
+  // reviewInventedValues === "auto" mode. Cancels the moment the user
+  // focuses/edits/clicks anything in the popover.
+  const [previewProgress, setPreviewProgress] = useState(1);
+  useEffect(() => {
+    if (status !== "previewing_value") {
+      setPreviewProgress(1);
+      return;
+    }
+    if (getReviewInventedValues() !== "auto") return;
+    const totalMs = Math.max(500, getReviewAutoApproveMs());
+    const startedAt = Date.now();
+    setPreviewProgress(1);
+    let raf = 0;
+    const tick = () => {
+      if (userTouchedPreviewRef.current) return; // user took over; stop animating
+      const elapsed = Date.now() - startedAt;
+      const remaining = Math.max(0, 1 - elapsed / totalMs);
+      setPreviewProgress(remaining);
+      if (remaining <= 0) {
+        approveValueRef.current?.();
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [status]);
 
   // Skip the value entirely (don't type, advance the step). Useful when the
   // user wants to leave a non-required field empty.
@@ -950,6 +1017,8 @@ export default function Companion() {
     detachClickListener();
     pendingConfirmRef.current = null;
     pendingValueRef.current = null;
+    approveAllRef.current = false;
+    userTouchedPreviewRef.current = false;
     setConfirmLabel("");
     setPreviewLabel("");
     setPreviewValue("");
@@ -1169,8 +1238,10 @@ export default function Companion() {
       </AnimatePresence>
 
       {/* Value-preview popover — shown when the AI proposes an invented value.
-          Sits next to the highlighted field; user can edit the value inline
-          and approve, or skip the field entirely. */}
+          Sits next to the highlighted field; user can edit the value inline,
+          approve, skip, or approve-all-remaining. In "auto" review mode, a
+          countdown bar at the top auto-approves after reviewAutoApproveMs
+          unless the user touches the popover. */}
       <AnimatePresence>
         {status === "previewing_value" && pointRect && (
           <motion.div
@@ -1179,43 +1250,74 @@ export default function Companion() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             data-companion-overlay
-            className="fixed z-[64] w-72 bg-white rounded-lg shadow-xl border border-slate-200 p-3 text-[12px]"
+            onMouseEnter={() => {
+              userTouchedPreviewRef.current = true;
+            }}
+            className="fixed z-[64] w-72 bg-white rounded-lg shadow-xl border border-slate-200 overflow-hidden text-[12px]"
             style={{
-              top: Math.min(pointRect.bottom + 10, window.innerHeight - 180),
+              top: Math.min(pointRect.bottom + 10, window.innerHeight - 200),
               left: Math.min(pointRect.left, window.innerWidth - 300),
             }}
           >
-            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
-              Suggested value for
-            </div>
-            <div className="text-sm font-semibold text-slate-800 mb-2 truncate">
-              {previewLabel}
-            </div>
-            <input
-              value={previewValue}
-              onChange={(e) => setPreviewValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") approveValue();
-                if (e.key === "Escape") skipValue();
-              }}
-              autoFocus
-              className="w-full text-sm border border-slate-300 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-300"
-            />
-            <div className="text-[10px] text-slate-400 mt-1">
-              Edit inline if you want. Enter approves, Esc skips.
-            </div>
-            <div className="flex gap-1.5 mt-3">
+            {getReviewInventedValues() === "auto" && (
+              <div className="h-1 bg-slate-100">
+                <div
+                  className="h-full bg-sky-500"
+                  style={{
+                    width: `${Math.round(previewProgress * 100)}%`,
+                    transition: "width 80ms linear",
+                  }}
+                />
+              </div>
+            )}
+            <div className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                Suggested value for
+              </div>
+              <div className="text-sm font-semibold text-slate-800 mb-2 truncate">
+                {previewLabel}
+              </div>
+              <input
+                value={previewValue}
+                onChange={(e) => {
+                  userTouchedPreviewRef.current = true;
+                  setPreviewValue(e.target.value);
+                }}
+                onFocus={() => {
+                  userTouchedPreviewRef.current = true;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") approveValue();
+                  if (e.key === "Escape") skipValue();
+                }}
+                autoFocus
+                className="w-full text-sm border border-slate-300 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-300"
+              />
+              <div className="text-[10px] text-slate-400 mt-1">
+                {getReviewInventedValues() === "auto"
+                  ? "Edit or click to keep open. Auto-approves shortly."
+                  : "Edit inline if you want. Enter approves, Esc skips."}
+              </div>
+              <div className="flex gap-1.5 mt-3">
+                <button
+                  onClick={skipValue}
+                  className="flex-1 text-xs rounded py-1.5 border border-slate-200 hover:bg-slate-50"
+                >
+                  Skip
+                </button>
+                <button
+                  onClick={approveValue}
+                  className="flex-1 text-xs text-white rounded py-1.5 bg-sky-600 hover:bg-sky-700"
+                >
+                  Approve
+                </button>
+              </div>
               <button
-                onClick={skipValue}
-                className="flex-1 text-xs rounded py-1.5 border border-slate-200 hover:bg-slate-50"
+                onClick={approveAll}
+                className="w-full text-[11px] mt-2 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-600"
+                title="Skip every popover for this task"
               >
-                Skip
-              </button>
-              <button
-                onClick={approveValue}
-                className="flex-1 text-xs text-white rounded py-1.5 bg-sky-600 hover:bg-sky-700"
-              >
-                Approve
+                ✓ Approve all remaining values
               </button>
             </div>
           </motion.div>

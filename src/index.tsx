@@ -10,8 +10,11 @@ export {
   setAnalyticsEndpoint,
   setAnalyticsCallback,
   setConfirmDestructiveActions,
+  setReviewInventedValues,
+  setReviewAutoApproveMs,
   type MountOptions,
   type CompanionEvent,
+  type ReviewMode,
 } from "./mount";
 
 import { mountCompanion as _mount, type MountOptions } from "./mount";
@@ -39,6 +42,8 @@ export function Companion(props: MountOptions): null {
     props.cursorSrc,
     props.analyticsEndpoint,
     props.confirmDestructiveActions,
+    props.reviewInventedValues,
+    props.reviewAutoApproveMs,
   ]);
   return null;
 }
