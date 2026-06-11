@@ -243,11 +243,19 @@ export default function Companion() {
         if (body.anthropicKey && body.provider === "anthropic") {
           return guideClient(body) as Promise<ChatResponseBody>;
         }
+        // Hard timeout on the proxy call. Anthropic+vision is typically
+        // 1-10s; 30s means something hung (cold start, network, dead proxy).
+        // Without this the UI sits on "thinking…" forever.
+        const ctl = new AbortController();
+        const tid = setTimeout(() => ctl.abort(), 30_000);
         return fetch(getCompanionEndpoint(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
-        }).then((r) => r.json() as Promise<ChatResponseBody>);
+          signal: ctl.signal,
+        })
+          .then((r) => r.json() as Promise<ChatResponseBody>)
+          .finally(() => clearTimeout(tid));
       };
 
       // Speculative screenshot in parallel with the first model call. If the
@@ -429,8 +437,29 @@ export default function Companion() {
   const runStep = useCallback(
     async (currentGoal: string, gen: number) => {
       if (gen !== generationRef.current) return;
-      const data = await callGuide(currentGoal, gen);
-      if (gen !== generationRef.current || !data) return;
+      let data: GuideResponseBody | null = null;
+      try {
+        data = await callGuide(currentGoal, gen);
+      } catch (err) {
+        if (gen !== generationRef.current) return;
+        console.error("[companion] step failed", err);
+        const aborted =
+          (err as { name?: string })?.name === "AbortError";
+        setSay(
+          aborted
+            ? "That took too long — please try again."
+            : "Something went wrong on the last step — try again."
+        );
+        setPointId(null);
+        setPointRect(null);
+        setStatus("punted");
+        return;
+      }
+      if (gen !== generationRef.current || !data) {
+        // null data without a thrown error means a stale generation aborted
+        // mid-flight. The newer generation owns the UI now — don't touch it.
+        return;
+      }
 
       totalLatencyRef.current += data._meta.latencyMs;
       totalStepsRef.current += 1;
@@ -619,6 +648,25 @@ export default function Companion() {
   useEffect(() => {
     runStepRef.current = runStep;
   }, [runStep]);
+
+  // Thinking watchdog: any "thinking" state that lingers past 35s is a hang
+  // (cold-start proxy, dropped connection, fetch we missed catching). The 30s
+  // fetch timeout above usually catches network hangs first; this is the
+  // backstop for everything else. Bumps generation so any in-flight work
+  // self-exits, then surfaces a clear failure to the user.
+  useEffect(() => {
+    if (status !== "thinking") return;
+    const tid = setTimeout(() => {
+      if (statusRef.current !== "thinking") return;
+      console.warn("[companion] thinking watchdog tripped after 35s");
+      generationRef.current += 1;
+      setSay("Lost the thread — please try again.");
+      setPointId(null);
+      setPointRect(null);
+      setStatus("punted");
+    }, 35_000);
+    return () => clearTimeout(tid);
+  }, [status]);
 
   // Programmatic API: window.sherpa.run("goal", { mode }), stop(), etc.
   // Mounted once. The handlers themselves read live state via refs/setters
